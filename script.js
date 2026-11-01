@@ -73,7 +73,7 @@ function decodeWords(str = '') {
     });
 }
 
-// ---------- MIME parsing (.eml core) ----------
+// MIME parsing (.eml core)
 // Headers read as a binary string: if they contain raw UTF-8 bytes, decode them properly
 function fixRaw(v) {
     if (!/[\x80-\xff]/.test(v) || /[^\x00-\xff]/.test(v)) return v;
@@ -148,7 +148,7 @@ function walk(node, fn, depth = 0) {
     node.children.forEach(c => walk(c, fn, depth + 1));
 }
 
-// ---------- Format detection ----------
+//Format detection
 async function loadEmail(file) {
     const buf = await file.arrayBuffer();
     const u8 = new Uint8Array(buf);
@@ -206,7 +206,7 @@ async function loadMsg(buf) {
     };
 }
 
-// ---------- Analysis ----------
+//Analysis
 const IP_RE = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const domainOf = s => (s.match(/@([A-Za-z0-9.-]+)/) || [])[1]?.toLowerCase() || '';
 
