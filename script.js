@@ -348,6 +348,9 @@ document.getElementById('fileUpload').addEventListener('change', async e => {
 
 //Is this email a phishing email ?
 
+//code for pdf or other file previews
+//if coordinates found display in map
+
 /*
 Email Content
 
