@@ -1,5 +1,5 @@
 
-
+// ---------- Helpers ----------
 const panelByTitle = t =>
     [...document.querySelectorAll('.panel')].find(p => p.querySelector('h2')?.textContent.trim() === t);
 
@@ -73,7 +73,7 @@ function decodeWords(str = '') {
     });
 }
 
-// MIME parsing (.eml core) 
+// ---------- MIME parsing (.eml core) ----------
 // Headers read as a binary string: if they contain raw UTF-8 bytes, decode them properly
 function fixRaw(v) {
     if (!/[\x80-\xff]/.test(v) || /[^\x00-\xff]/.test(v)) return v;
@@ -148,7 +148,7 @@ function walk(node, fn, depth = 0) {
     node.children.forEach(c => walk(c, fn, depth + 1));
 }
 
-//Format detection
+// ---------- Format detection ----------
 async function loadEmail(file) {
     const buf = await file.arrayBuffer();
     const u8 = new Uint8Array(buf);
@@ -206,7 +206,7 @@ async function loadMsg(buf) {
     };
 }
 
-//Analysis
+// ---------- Analysis ----------
 const IP_RE = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const domainOf = s => (s.match(/@([A-Za-z0-9.-]+)/) || [])[1]?.toLowerCase() || '';
 
@@ -226,13 +226,14 @@ function populate(m) {
         // Sandboxed with no permissions: scripts, forms and top navigation are blocked
         const f = document.createElement('iframe');
         f.setAttribute('sandbox', '');
-        f.srcdoc = m.html;
+        // Wrap long unbroken strings inside the email's own document too
+        f.srcdoc = '<style>html,body{overflow-wrap:anywhere;word-break:break-word}img{max-width:100%;height:auto}</style>' + m.html;
         f.style.cssText = 'width:100%;height:400px;border:1px solid #ccc;background:#fff';
         p.append(f);
     }
     if (m.text) {
         const pre = document.createElement('pre');
-        pre.style.whiteSpace = 'pre-wrap';
+        pre.style.cssText = 'white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-width:100%;margin:0';
         pre.textContent = m.text;
         p.append(pre);
     }
@@ -316,7 +317,7 @@ function populate(m) {
     render('Other Metadata Discovered', h.filter(([n]) => /^x-/i.test(n)).map(([n, v]) => [n, v]));
 }
 
-//Wire up
+
 document.getElementById('fileUpload').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -340,6 +341,12 @@ document.getElementById('fileUpload').addEventListener('change', async e => {
 //What is the return path of the email?
 //What is the domain name of the url in this mail?
 //What is the sender IP address listed in the Received-SPF header?
+
+//What is the return path of the email ?
+//What is the domain name of the url in this mail ?
+//What is the sender IP address listed in the Received - SPF header ?
+
+//Is this email a phishing email ?
 
 /*
 Email Content
