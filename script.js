@@ -1,4 +1,5 @@
-console.log('email script loaded');
+
+
 const panelByTitle = t =>
     [...document.querySelectorAll('.panel')].find(p => p.querySelector('h2')?.textContent.trim() === t);
 
@@ -32,34 +33,58 @@ const bufToBinary = buf => {
 };
 const binToBytes = s => Uint8Array.from(s, c => c.charCodeAt(0));
 
-function bytesToText(bytes, charset = 'utf-8') {
-    try { return new TextDecoder(charset.toLowerCase()).decode(bytes); }
-    catch { return new TextDecoder('utf-8').decode(bytes); }
+function bytesToText(bytes, charset) {
+    const label = (charset || '').trim().replace(/^["']|["']$/g, '').toLowerCase();
+    const attempt = (cs, fatal) => {
+        try { return new TextDecoder(cs, { fatal }).decode(bytes); } catch { return null; }
+    };
+    // No charset declared: try strict UTF-8 first, else assume Windows-1252
+    if (!label) return attempt('utf-8', true) ?? attempt('windows-1252', false);
+    // Declared charset (shift_jis, iso-2022-jp, euc-kr, gb2312, big5, koi8-r, ...), then fallbacks
+    return attempt(label, false) ?? attempt('utf-8', true) ?? attempt('windows-1252', false);
 }
 
 const decodeQP = s =>
     s.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
 
-// RFC 2047 encoded words: =?UTF-8?B?...?= / =?ISO-8859-1?Q?...?=
+// RFC 2047 encoded words: =?UTF-8?B?...?= / =?ISO-2022-JP?B?...?=
+// Adjacent words with the same charset/encoding are joined BEFORE decoding, because
+// a multibyte character (or ISO-2022-JP escape sequence) can be split across words.
+const WORD = /=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/;
 function decodeWords(str = '') {
-    return str
-        .replace(/(\?=)\s+(=\?)/g, '$1$2')
-        .replace(/=\?([^?]+)\?([bBqQ])\?([^?]*)\?=/g, (_, cs, enc, txt) => {
-            try {
-                const bin = enc.toUpperCase() === 'B'
-                    ? atob(txt)
-                    : decodeQP(txt.replace(/_/g, ' '));
-                return bytesToText(binToBytes(bin), cs);
-            } catch { return txt; }
-        });
+    str = str.replace(/(\?=)\s+(=\?)/g, '$1$2');
+    return str.replace(/(?:=\?[^?]+\?[bBqQ]\?[^?]*\?=)+/g, run => {
+        const words = run.match(new RegExp(WORD.source, 'g'));
+        let out = '';
+        for (let i = 0; i < words.length;) {
+            const [, cs, enc] = words[i].match(WORD);
+            let bin = '', j = i;
+            for (; j < words.length; j++) {
+                const m = words[j].match(WORD);
+                if (m[1].toLowerCase() !== cs.toLowerCase() || m[2].toUpperCase() !== enc.toUpperCase()) break;
+                try {
+                    bin += enc.toUpperCase() === 'B' ? atob(m[3]) : decodeQP(m[3].replace(/_/g, ' '));
+                } catch { /* skip bad word */ }
+            }
+            out += bytesToText(binToBytes(bin), cs.split('*')[0]); // "utf-8*ja" -> "utf-8"
+            i = j;
+        }
+        return out;
+    });
 }
 
-//MIME parsing (.eml core)
+// MIME parsing (.eml core) 
+// Headers read as a binary string: if they contain raw UTF-8 bytes, decode them properly
+function fixRaw(v) {
+    if (!/[\x80-\xff]/.test(v) || /[^\x00-\xff]/.test(v)) return v;
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(binToBytes(v)); } catch { return v; }
+}
+
 function parseHeaders(text) {
     const unfolded = text.replace(/\r?\n[ \t]+/g, ' ');
     return unfolded.split(/\r?\n/).filter(l => l.includes(':')).map(l => {
         const i = l.indexOf(':');
-        return [l.slice(0, i).trim(), l.slice(i + 1).trim()];
+        return [l.slice(0, i).trim(), fixRaw(l.slice(i + 1).trim())];
     });
 }
 const getAll = (h, name) => h.filter(([n]) => n.toLowerCase() === name.toLowerCase()).map(([, v]) => v);
@@ -71,6 +96,15 @@ function parseParams(value) {
     for (const r of rest) {
         const m = r.match(/^\s*([^=\s]+)\s*=\s*"?([^"]*)"?\s*$/);
         if (m) params[m[1].toLowerCase()] = m[2];
+    }
+    for (const k of Object.keys(params)) {
+        if (k.endsWith('*') && !/\*\d/.test(k)) {
+            const m = params[k].match(/^([^']*)'[^']*'(.*)$/);
+            if (m) {
+                const bin = m[2].replace(/%([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
+                params[k.slice(0, -1)] = bytesToText(binToBytes(bin), m[1] || 'utf-8');
+            }
+        }
     }
     return { type: main.trim().toLowerCase(), params };
 }
