@@ -263,7 +263,7 @@ const domainOf = s => (s.match(/@([A-Za-z0-9.-]+)/) || [])[1]?.toLowerCase() || 
 function findLinks(m) {
     const urls = new Set();
     const re = /\b(?:https?:\/\/|www\.)[^\s<>"'\])]+/gi;
-    const clean = u => u.trim().replace(/[.,;:!?]+$/, '');
+    const clean = u => u.trim().replace(/[.,;:!?]+$/, ''); //here
 
     if (m.html) {
         const doc = new DOMParser().parseFromString(m.html, 'text/html');
@@ -277,11 +277,36 @@ function findLinks(m) {
     return [...urls];
 }
 
+//email addresses
+function findEmails(m) {
+    const found = new Map(); // address -> places it appeared
+    const re = /[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+/gu;
+    const scan = (text, where) => (text.match(re) || []).forEach(a => {
+        a = a.toLowerCase();
+        if (!found.has(a)) found.set(a, new Set());
+        found.get(a).add(where);
+    });
+
+    // Every header except the ones that hold ID-style values (<abc@host>), which aren't real addresses
+    for (const [name, value] of m.headers) {
+        if (/^(message-id|in-reply-to|references|content-id|resent-message-id)$/i.test(name)) continue;
+        scan(decodeWords(value), name);
+    }
+    scan(m.text, 'body text');
+    if (m.html) {
+        const doc = new DOMParser().parseFromString(m.html, 'text/html');
+        doc.querySelectorAll('a[href^="mailto:" i]').forEach(a => scan(a.getAttribute('href'), 'mailto link'));
+        scan(doc.body.textContent, 'body html');
+    }
+    return [...found].map(([addr, where]) => [addr, [...where].join(', ')]);
+}
+
 async function populate(m) {
 
     //for the links
     const links = findLinks(m);
     render('Links Found', links.map((u, i) => [String(i + 1), u]));
+    render('Email Addresses', findEmails(m));
 
     const h = m.headers;
     const dec = name => getAll(h, name).map(decodeWords);
