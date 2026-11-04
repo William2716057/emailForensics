@@ -260,7 +260,29 @@ async function loadMsg(buf) {
 const IP_RE = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const domainOf = s => (s.match(/@([A-Za-z0-9.-]+)/) || [])[1]?.toLowerCase() || '';
 
+function findLinks(m) {
+    const urls = new Set();
+    const re = /\b(?:https?:\/\/|www\.)[^\s<>"'\])]+/gi;
+    const clean = u => u.trim().replace(/[.,;:!?]+$/, '');
+
+    if (m.html) {
+        const doc = new DOMParser().parseFromString(m.html, 'text/html');
+        doc.querySelectorAll('a[href]').forEach(a => urls.add(clean(a.getAttribute('href'))));
+        (doc.body.textContent.match(re) || []).forEach(u => urls.add(clean(u)));
+    }
+    (m.text.match(re) || []).forEach(u => urls.add(clean(u)));
+
+    urls.delete('');
+    urls.delete('#');
+    return [...urls];
+}
+
 async function populate(m) {
+
+    //for the links
+    const links = findLinks(m);
+    render('Links Found', links.map((u, i) => [String(i + 1), u]));
+
     const h = m.headers;
     const dec = name => getAll(h, name).map(decodeWords);
 
