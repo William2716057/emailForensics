@@ -1,5 +1,5 @@
 
-// ---------- Helpers ----------
+//Helpers
 const panelByTitle = t =>
     [...document.querySelectorAll('.panel')].find(p => p.querySelector('h2')?.textContent.trim() === t);
 
@@ -73,7 +73,7 @@ function decodeWords(str = '') {
     });
 }
 
-// MIME parsing (.eml core)
+//MIME parsing
 // Headers read as a binary string: if they contain raw UTF-8 bytes, decode them properly
 function fixRaw(v) {
     if (!/[\x80-\xff]/.test(v) || /[^\x00-\xff]/.test(v)) return v;
@@ -148,6 +148,49 @@ function walk(node, fn, depth = 0) {
     node.children.forEach(c => walk(c, fn, depth + 1));
 }
 
+//Hashing
+function md5(bytes) {
+    const K = new Uint32Array(64);
+    const S = [7, 12, 17, 22, 5, 9, 14, 20, 4, 11, 16, 23, 6, 10, 15, 21];
+    for (let i = 0; i < 64; i++) K[i] = Math.floor(Math.abs(Math.sin(i + 1)) * 4294967296);
+    const len = bytes.length;
+    const total = (Math.floor((len + 8) / 64) + 1) * 64;
+    const buf = new Uint8Array(total);
+    buf.set(bytes);
+    buf[len] = 0x80;
+    const dv = new DataView(buf.buffer);
+    dv.setUint32(total - 8, (len * 8) >>> 0, true);
+    dv.setUint32(total - 4, Math.floor(len / 0x20000000), true);
+    let a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
+    for (let off = 0; off < total; off += 64) {
+        let A = a0, B = b0, C = c0, D = d0;
+        for (let i = 0; i < 64; i++) {
+            let F, g;
+            if (i < 16) { F = (B & C) | (~B & D); g = i; }
+            else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
+            else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
+            else { F = C ^ (B | ~D); g = (7 * i) % 16; }
+            F = (F + A + K[i] + dv.getUint32(off + g * 4, true)) >>> 0;
+            A = D; D = C; C = B;
+            const sh = S[(i >> 4) * 4 + (i & 3)];
+            B = (B + ((F << sh) | (F >>> (32 - sh)))) >>> 0;
+        }
+        a0 = (a0 + A) >>> 0; b0 = (b0 + B) >>> 0; c0 = (c0 + C) >>> 0; d0 = (d0 + D) >>> 0;
+    }
+    return [a0, b0, c0, d0]
+        .map(v => [0, 8, 16, 24].map(sh => ((v >>> sh) & 255).toString(16).padStart(2, '0')).join(''))
+        .join('');
+}
+
+async function hashes(bytes) {
+    let sha256 = 'unavailable (needs https or localhost)';
+    try {
+        const d = await crypto.subtle.digest('SHA-256', bytes);
+        sha256 = [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch { /* insecure context */ }
+    return { md5: md5(bytes), sha256 };
+}
+
 //Format detection
 async function loadEmail(file) {
     const buf = await file.arrayBuffer();
@@ -180,17 +223,18 @@ async function loadEmail(file) {
             (n.cte ? ` [${n.cte}]` : ''));
         if (!n.bytes) return;
         const isAttach = n.disposition === 'attachment' || n.filename;
-        if (isAttach) attachments.push({ name: n.filename || '(unnamed)', type: n.type, size: n.bytes.length });
+        if (isAttach) attachments.push({ name: n.filename || '(unnamed)', type: n.type, size: n.bytes.length, bytes: n.bytes });
         else if (n.type === 'text/plain') text += bytesToText(n.bytes, n.params.charset);
         else if (n.type === 'text/html') html += bytesToText(n.bytes, n.params.charset);
     });
-    return { headers: root.headers, text, html, attachments, structure, note, format: ext };
+    return { headers: root.headers, text, html, attachments, structure, note, format: ext, fileBytes: u8 };
 }
 
 async function loadMsg(buf) {
     // .msg needs a library. @kenjiuno/msgreader is a pure-JS reader.
     const { default: MsgReader } = await import('https://esm.sh/@kenjiuno/msgreader');
-    const d = new MsgReader(buf).getFileData();
+    const reader = new MsgReader(buf);
+    const d = reader.getFileData();
     const headers = d.headers ? parseHeaders(d.headers) : [];
     if (!headers.length) {
         headers.push(['From', `${d.senderName || ''} <${d.senderEmail || ''}>`]);
@@ -199,10 +243,16 @@ async function loadMsg(buf) {
     }
     return {
         headers, text: d.body || '', html: d.bodyHtml || '',
-        attachments: (d.attachments || []).map(a => ({
-            name: a.fileName || a.name || '(unnamed)', type: a.mimeType || '', size: a.contentLength || 0,
-        })),
+        attachments: (d.attachments || []).map(a => {
+            let bytes;
+            try { bytes = reader.getAttachment(a).content; } catch { /* no content */ }
+            return {
+                name: a.fileName || a.name || '(unnamed)', type: a.mimeType || '',
+                size: bytes?.length ?? a.contentLength ?? 0, bytes,
+            };
+        }),
         structure: ['Outlook .msg (OLE2 compound file)'], note: '', format: 'msg',
+        fileBytes: new Uint8Array(buf),
     };
 }
 
@@ -210,7 +260,7 @@ async function loadMsg(buf) {
 const IP_RE = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const domainOf = s => (s.match(/@([A-Za-z0-9.-]+)/) || [])[1]?.toLowerCase() || '';
 
-function populate(m) {
+async function populate(m) {
     const h = m.headers;
     const dec = name => getAll(h, name).map(decodeWords);
 
@@ -258,15 +308,24 @@ function populate(m) {
         ['First hop (latest)', received[0]?.split(';').pop().trim() || ''],
     ]);
 
+    const fileHash = m.fileBytes ? await hashes(m.fileBytes) : null;
     render('Technical Metadata', [
         ['Message-ID', get(h, 'message-id')], ['MIME-Version', get(h, 'mime-version')],
         ['Content-Type', get(h, 'content-type')],
         ['Content-Transfer-Encoding', get(h, 'content-transfer-encoding')],
         ['Header count', String(h.length)], ['File format', m.format],
+        ['File MD5', fileHash?.md5], ['File SHA-256', fileHash?.sha256],
     ].filter(r => r[1]));
 
-    render('Attachment Metadata', m.attachments.map(a =>
-        [a.name, `${a.type}, ${a.size.toLocaleString()} bytes`]));
+    const attRows = [];
+    for (const a of m.attachments) {
+        const hs = a.bytes ? await hashes(a.bytes) : null;
+        attRows.push([a.name, [
+            `${a.type}, ${a.size.toLocaleString()} bytes`,
+            ...(hs ? [`MD5: ${hs.md5}`, `SHA-256: ${hs.sha256}`] : []),
+        ]]);
+    }
+    render('Attachment Metadata', attRows);
 
     const ips = [...new Set([...received.join(' ').matchAll(IP_RE)].map(x => x[0])
         .concat(getAll(h, 'x-originating-ip').flatMap(v => v.match(IP_RE) || [])))];
@@ -317,12 +376,12 @@ function populate(m) {
     render('Other Metadata Discovered', h.filter(([n]) => /^x-/i.test(n)).map(([n, v]) => [n, v]));
 }
 
-
+//Wire up
 document.getElementById('fileUpload').addEventListener('change', async e => {
     const file = e.target.files[0];
     if (!file) return;
     try {
-        populate(await loadEmail(file));
+        await populate(await loadEmail(file));
     } catch (err) {
         console.error(err);
         render('Email Content', [['Error', `Could not parse this file: ${err.message}`]]);
