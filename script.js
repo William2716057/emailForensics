@@ -3,7 +3,7 @@
 const panelByTitle = t =>
     [...document.querySelectorAll('.panel')].find(p => p.querySelector('h2')?.textContent.trim() === t);
 
-// Fill a panel with label/value rows. Uses textContent only (email data is untrusted).
+// Fill panel with label/value rows. Uses textContent only (email data untrusted).
 function render(title, rows) {
     const p = panelByTitle(title);
     if (!p) return;
@@ -74,7 +74,7 @@ function decodeWords(str = '') {
 }
 
 //MIME parsing
-// Headers read as a binary string: if they contain raw UTF-8 bytes, decode them properly
+// Headers read as binary string: if they contain raw UTF-8 bytes, decode them properly
 function fixRaw(v) {
     if (!/[\x80-\xff]/.test(v) || /[^\x00-\xff]/.test(v)) return v;
     try { return new TextDecoder('utf-8', { fatal: true }).decode(binToBytes(v)); } catch { return v; }
@@ -231,8 +231,8 @@ async function loadEmail(file) {
 }
 
 async function loadMsg(buf) {
-    // .msg needs a library. @kenjiuno/msgreader is a pure-JS reader.
-    const { default: MsgReader } = await import('https://esm.sh/@kenjiuno/msgreader');
+    // .msg needs a library. use @kenjiuno/msgreader
+    const { default: MsgReader } = await import('https://esm.sh/@kenjiuno/msgreader'); //change
     const reader = new MsgReader(buf);
     const d = reader.getFileData();
     const headers = d.headers ? parseHeaders(d.headers) : [];
